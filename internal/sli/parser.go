@@ -1,10 +1,7 @@
 package sli
 
-import "errors"
-
-var (
-    ErrInvalidPathArg = errors.New(`path for saving the file is not specified`)
-    ErrInvalidLinkArg = errors.New(`download urls are not set`)
+import (
+	"fmt"
 )
 
 // Содержит информацию о конфигурации, которая была передана в аргументах CLI
@@ -15,10 +12,10 @@ type Config struct {
 
 func ParseArgs(args []string) (*Config, error) {
 	if len(args) < 2 {
-		return nil, ErrInvalidPathArg
+		return nil, fmt.Errorf("path for saving the file is not specified")
 	}
 	if len(args) < 3 {
-		return nil, ErrInvalidLinkArg
+		return nil, fmt.Errorf("download urls are not set")
 	}
 
 	return &Config{

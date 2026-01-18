@@ -11,38 +11,38 @@ import (
 )
 
 func main() {
-    // Парсим аргументы
-    config, err := sli.ParseArgs(os.Args)
-    if err != nil {
-        fmt.Println("Ошибка:", err)
-        return
-    }
+	// Парсим аргументы
+	config, err := sli.ParseArgs(os.Args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parsing args: %v\n", err)
+		return
+	}
 
-    // Создаём загрузчик
-    dl := downloader.New(30*time.Second, downloader.DefaultChunkSize)
+	// Создаём загрузчик
+	dl := downloader.NewDownloader(30*time.Second, downloader.DefaultChunkSize)
 
-    // Запускаем загрузки параллельно
-    var wg sync.WaitGroup
-    errorsCh := make(chan error, len(config.URLs))
+	// Запускаем загрузки параллельно
+	var wg sync.WaitGroup
+	errorsCh := make(chan error, len(config.URLs))
 
-    for _, url := range config.URLs {
-        wg.Add(1)
-        go func(u string) {
-            defer wg.Done()
-            if err := dl.Download(u, config.SavePath); err != nil {
-                errorsCh <- fmt.Errorf("failed to download %s: %w", u, err)
-            }
-        }(url)
-    }
+	for _, url := range config.URLs {
+		wg.Add(1)
+		go func(u string) {
+			defer wg.Done()
+			if err := dl.Download(u, config.SavePath); err != nil {
+				errorsCh <- fmt.Errorf("processing url %s: %w", u, err)
+			}
+		}(url)
+	}
 
-    // Ожидаем завершения
-    go func() {
-        wg.Wait()
-        close(errorsCh)
-    }()
+	// Ожидаем завершения
+	go func() {
+		wg.Wait()
+		close(errorsCh)
+	}()
 
-    // Выводим ошибки
-    for err := range errorsCh {
-        fmt.Println("Ошибка:", err)
-    }
+	// Выводим ошибки
+	for err := range errorsCh {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+	}
 }

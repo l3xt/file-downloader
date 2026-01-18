@@ -15,7 +15,7 @@ type FileMetadata struct {
 func FetchMetadata(client *http.Client, url string, chunkSize int) (*FileMetadata, error) {
 	resp, err := client.Head(url)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch metadata: %w", err)
+		return nil, fmt.Errorf("head request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -26,13 +26,13 @@ func FetchMetadata(client *http.Client, url string, chunkSize int) (*FileMetadat
 	// Получаем значение заголовка Content-Length
 	sizeStr := resp.Header.Get("Content-Length")
 	if sizeStr == "" {
-		return nil, fmt.Errorf("Content-Length header missing")
+		return nil, fmt.Errorf("header Content-Length missing")
 	}
 
 	// Конвертация размера в Int 
 	size, err := strconv.ParseInt(sizeStr, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("invalid Content-Length: %w", err)
+		return nil, fmt.Errorf("invalid Content-Length value: %w", err)
 	}
 
 	// Поддерживает ли URL Range
