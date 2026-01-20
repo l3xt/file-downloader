@@ -6,6 +6,7 @@ import (
 	"strconv"
 )
 
+// Структура с метаданными
 type FileMetadata struct {
 	Size int64
 	Resumable bool

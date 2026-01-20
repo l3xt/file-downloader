@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-const FileExtension string = ".progress"
+const fileExtension string = ".progress"
 
 // Структура с информацией о прогрессе загружаемого файла
 type DownloadState struct {
@@ -32,7 +32,7 @@ func NewDownloadState(dir, name string, chunkSize, totalChunks int) (*DownloadSt
 
 	return &DownloadState{
 		Dir:              dir,
-		Name:             name + FileExtension,
+		Name:             name + fileExtension,
 		ChunkSize:        chunkSize,
 		DownloadedChunks: make([]bool, totalChunks),
 	}, nil
@@ -63,7 +63,7 @@ func LoadJSON(dir, name string) (*DownloadState, error) {
 		return nil, fmt.Errorf("invalid file name: %s", name)
 	}
 
-	fullPath := filepath.Join(dir, name + FileExtension)
+	fullPath := filepath.Join(dir, name + fileExtension)
 
 	if _, err := os.Stat(fullPath); err != nil {
 		return nil, err

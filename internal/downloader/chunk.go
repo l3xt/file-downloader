@@ -5,43 +5,92 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
 const maxRetries = 3
 const retryDelay = 5 * time.Second
+const numWorkers = 8
+
+type ChunkJob struct {
+	url      string
+	chunkNum int
+	ws     io.WriteSeeker
+}
+
+type ChunkResult struct {
+	chunkNum int
+	err      error
+}
+
+func (d *Downloader) worker(jobs <-chan ChunkJob, results chan<- ChunkResult, wg *sync.WaitGroup) {
+	for j := range jobs {
+		var err error
+		result := ChunkResult{
+			chunkNum: j.chunkNum,
+			err:      nil,
+		}
+
+		for range maxRetries {
+			err = d.downloadChunk(j.url, j.chunkNum, j.ws)
+			if err == nil {
+				fmt.Printf("Chunk %d downloaded successfully\n", j.chunkNum)
+				results <- result
+				wg.Done()
+				break // Останавливаем цикл  если чанк скачен
+			}
+
+			// Если произошла ошибка
+			fmt.Printf("Error downloading chunk %d, try again after %v seconds...\n", j.chunkNum, retryDelay.Seconds())
+			time.Sleep(retryDelay)
+		}
+
+		// Если после всех попыток ошибка осталась
+		if err != nil {
+			result.err = err
+			results <- result
+		}
+		wg.Done()
+	}
+}
 
 // Скачивание файла с помощью чанков
 func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, dest io.WriteSeeker) error {
-	for chunk := 0; chunk < len(state.DownloadedChunks); chunk++ {
+	chunksCount := len(state.DownloadedChunks)
+	jobsCh := make(chan ChunkJob, chunksCount)
+	resultsCh := make(chan ChunkResult, chunksCount)
+
+	var wg sync.WaitGroup
+
+	// Запускаем воркеры
+	for range numWorkers {
+		go d.worker(jobsCh, resultsCh, &wg)
+	}
+
+	for chunk := range chunksCount {
 		// Если чанк уже был загружен, что пропускаем
 		if state.DownloadedChunks[chunk] {
 			continue
 		}
 
 		// Загружаем один чанк
-		var err error = nil
-		for range maxRetries {
-			err = d.downloadChunk(url, chunk, dest)
-			if err == nil {
-				fmt.Printf("Chunk %d downloaded successfully\n", chunk)
-				break	// Останавливаем цикл  если чанк скачен
-			}
-
-			// Если произошла ошибка
-			fmt.Printf("Error downloading chunk %d, try again after %v seconds...\n", chunk, retryDelay.Seconds())
-			time.Sleep(retryDelay)
+		wg.Add(1)
+		jobsCh <- ChunkJob{
+			url:      url,
+			chunkNum: chunk,
+			ws:       dest,
 		}
-
-		// Если после всех попыток остается ошибка, то обрываем загрузку остальных чанков
-		if err != nil {
-			state.SaveJSON()
-			return fmt.Errorf("load chunk %d: %w", chunk, err)
-		}
-
-		// Делаем пометку что чанк скачан
-		state.DownloadedChunks[chunk] = true
 	}
+	close(jobsCh)
+
+	for range resultsCh {
+		result := <-resultsCh
+		if result.err != nil {
+			return fmt.Errorf("chunk %d download: \n", result.chunkNum)
+		}
+	}
+
 	// Сохраняем прогресс в файл прогресса
 	if err := state.SaveJSON(); err != nil {
 		return err

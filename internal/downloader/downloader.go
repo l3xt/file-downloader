@@ -42,11 +42,10 @@ func (d *Downloader) Download(url, dirPath string) error {
 
 	// Создание файла
 	fileName := path.Base(url)
-	file, err := storage.PrepareFile(dirPath, fileName, meta.Size)
+	sf, err := storage.NewSafeFile(dirPath, fileName, meta.Size)
 	if err != nil {
 		return fmt.Errorf("creating file: %w", err)
 	}
-	defer file.Close()
 
 	// Загрузка данных
 	if meta.Resumable && meta.ChunksCount > 1 {
@@ -56,10 +55,10 @@ func (d *Downloader) Download(url, dirPath string) error {
 			return loadErr
 		}
 
-		err = d.downloadChunks(url, state, file)
+		err = d.downloadChunks(url, state, sf.File)
 	} else {
 		// Загрузка обычная
-		err = d.downloadSimple(url, file)
+		err = d.downloadSimple(url, sf.File)
 	}
 	if err != nil {
 		return err
