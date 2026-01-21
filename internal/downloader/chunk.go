@@ -16,7 +16,7 @@ const numWorkers = 8
 type ChunkJob struct {
 	url      string
 	chunkNum int
-	ws     io.WriteSeeker
+	sf       *storage.SafeFile
 }
 
 type ChunkResult struct {
@@ -26,18 +26,16 @@ type ChunkResult struct {
 
 func (d *Downloader) worker(jobs <-chan ChunkJob, results chan<- ChunkResult, wg *sync.WaitGroup) {
 	for j := range jobs {
-		var err error
 		result := ChunkResult{
 			chunkNum: j.chunkNum,
 			err:      nil,
 		}
 
+		var err error
 		for range maxRetries {
-			err = d.downloadChunk(j.url, j.chunkNum, j.ws)
+			err = d.downloadChunk(j.url, j.chunkNum, j.sf)
 			if err == nil {
 				fmt.Printf("Chunk %d downloaded successfully\n", j.chunkNum)
-				results <- result
-				wg.Done()
 				break // Останавливаем цикл  если чанк скачен
 			}
 
@@ -46,17 +44,15 @@ func (d *Downloader) worker(jobs <-chan ChunkJob, results chan<- ChunkResult, wg
 			time.Sleep(retryDelay)
 		}
 
-		// Если после всех попыток ошибка осталась
-		if err != nil {
-			result.err = err
-			results <- result
-		}
+		// Устанавливаем ошибку если она есть
+		result.err = err
+		results <- result
 		wg.Done()
 	}
 }
 
 // Скачивание файла с помощью чанков
-func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, dest io.WriteSeeker) error {
+func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, sf *storage.SafeFile) error {
 	chunksCount := len(state.DownloadedChunks)
 	jobsCh := make(chan ChunkJob, chunksCount)
 	resultsCh := make(chan ChunkResult, chunksCount)
@@ -67,6 +63,16 @@ func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, de
 	for range numWorkers {
 		go d.worker(jobsCh, resultsCh, &wg)
 	}
+
+	go func() {
+		for result := range resultsCh {
+			if result.err == nil {
+				state.DownloadedChunks[result.chunkNum] = true
+			} else {
+				fmt.Printf("Error downloading chunk %d: %s\n", result.chunkNum, result.err.Error())
+			}
+		}
+	}()
 
 	for chunk := range chunksCount {
 		// Если чанк уже был загружен, что пропускаем
@@ -79,17 +85,13 @@ func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, de
 		jobsCh <- ChunkJob{
 			url:      url,
 			chunkNum: chunk,
-			ws:       dest,
+			sf:       sf,
 		}
 	}
-	close(jobsCh)
 
-	for range resultsCh {
-		result := <-resultsCh
-		if result.err != nil {
-			return fmt.Errorf("chunk %d download: \n", result.chunkNum)
-		}
-	}
+	close(jobsCh)
+	wg.Wait()
+	close(resultsCh)
 
 	// Сохраняем прогресс в файл прогресса
 	if err := state.SaveJSON(); err != nil {
@@ -99,7 +101,7 @@ func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, de
 }
 
 // Скачивание одного чанка
-func (d *Downloader) downloadChunk(url string, chunkNum int, dest io.WriteSeeker) error {
+func (d *Downloader) downloadChunk(url string, chunkNum int, sf *storage.SafeFile) error {
 	start := int64(d.chunkSize * chunkNum)
 	end := start + int64(d.chunkSize) - 1
 
@@ -121,14 +123,16 @@ func (d *Downloader) downloadChunk(url string, chunkNum int, dest io.WriteSeeker
 	}
 
 	// Позиционируемся в файле
-	if _, err := dest.Seek(start, io.SeekStart); err != nil {
+	sf.Mu.Lock()
+	if _, err := sf.File.Seek(start, io.SeekStart); err != nil {
 		return err
 	}
 
 	// Копируем данные
-	if _, err := io.Copy(dest, resp.Body); err != nil {
+	if _, err := io.Copy(sf.File, resp.Body); err != nil {
 		return err
 	}
+	sf.Mu.Unlock()
 
 	return nil
 }

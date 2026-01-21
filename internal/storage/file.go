@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,7 +9,7 @@ import (
 
 type SafeFile struct {
 	File *os.File
-	mu   sync.Mutex
+	Mu   sync.Mutex
 }
 
 func NewSafeFile(dirPath, fileName string, size int64) (*SafeFile, error) {
@@ -34,32 +33,4 @@ func NewSafeFile(dirPath, fileName string, size int64) (*SafeFile, error) {
 	return &SafeFile{
 		File: f,
 	}, nil
-}
-
-func (sf *SafeFile) CopyAt(src io.Reader, startPos int64) error {
-	sf.mu.Lock()
-	// Позиционируемся в файле
-	if _, err := sf.File.Seek(startPos, io.SeekStart); err != nil {
-		return err
-	}
-
-	// Копируем данные
-	if _, err := io.Copy(sf.File, src); err != nil {
-		return err
-	}
-	sf.mu.Unlock()
-
-	return nil
-}
-
-func (sf *SafeFile) Write(b []byte) (n int, err error) {
-	sf.mu.Lock()
-	defer sf.mu.Unlock()
-	return sf.File.Write(b)
-}
-
-func (sf *SafeFile) Seek(offset int64, whence int) (ret int64, err error) {
-	sf.mu.Lock()
-	defer sf.mu.Unlock()
-	return sf.File.Seek(offset, whence)
 }

@@ -55,7 +55,7 @@ func (d *Downloader) Download(url, dirPath string) error {
 			return loadErr
 		}
 
-		err = d.downloadChunks(url, state, sf.File)
+		err = d.downloadChunks(url, state, sf)
 	} else {
 		// Загрузка обычная
 		err = d.downloadSimple(url, sf.File)
