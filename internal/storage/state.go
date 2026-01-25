@@ -16,6 +16,7 @@ type DownloadState struct {
 	Name             string `json:"name"`
 	ChunkSize        int    `json:"chunkSize"`
 	DownloadedChunks []bool `json:"downloadedChunks"`
+	DownloadedCount  int 	`json:"downloadedCount"`
 }
 
 // Создание экземпляра DownloadState с валидацией
@@ -63,7 +64,7 @@ func LoadJSON(dir, name string) (*DownloadState, error) {
 		return nil, fmt.Errorf("invalid file name: %s", name)
 	}
 
-	fullPath := filepath.Join(dir, name + fileExtension)
+	fullPath := filepath.Join(dir, name+fileExtension)
 
 	if _, err := os.Stat(fullPath); err != nil {
 		return nil, err

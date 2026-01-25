@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"file-downloader/internal/storage"
+	"file-downloader/internal/ui"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,7 +25,7 @@ type ChunkResult struct {
 	err      error
 }
 
-func (d *Downloader) worker(jobs <-chan ChunkJob, results chan<- ChunkResult, wg *sync.WaitGroup) {
+func (d *Downloader) worker(jobs <-chan ChunkJob, results chan<- ChunkResult, wg *sync.WaitGroup, tracker ui.Tracker) {
 	for j := range jobs {
 		result := ChunkResult{
 			chunkNum: j.chunkNum,
@@ -33,14 +34,13 @@ func (d *Downloader) worker(jobs <-chan ChunkJob, results chan<- ChunkResult, wg
 
 		var err error
 		for range maxRetries {
-			err = d.downloadChunk(j.url, j.chunkNum, j.sf)
+			err = d.downloadChunk(j.url, j.chunkNum, j.sf, tracker)
 			if err == nil {
-				fmt.Printf("Chunk %d downloaded successfully\n", j.chunkNum)
 				break // Останавливаем цикл  если чанк скачен
 			}
 
 			// Если произошла ошибка
-			fmt.Printf("Error downloading chunk %d, try again after %v seconds...\n", j.chunkNum, retryDelay.Seconds())
+			tracker.Logf("Error downloading chunk %d, try again after %v seconds...\n", j.chunkNum, retryDelay.Seconds())
 			time.Sleep(retryDelay)
 		}
 
@@ -52,7 +52,7 @@ func (d *Downloader) worker(jobs <-chan ChunkJob, results chan<- ChunkResult, wg
 }
 
 // Скачивание файла с помощью чанков
-func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, sf *storage.SafeFile) error {
+func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, sf *storage.SafeFile, tracker ui.Tracker) error {
 	chunksCount := len(state.DownloadedChunks)
 	jobsCh := make(chan ChunkJob, chunksCount)
 	resultsCh := make(chan ChunkResult, chunksCount)
@@ -61,7 +61,7 @@ func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, sf
 
 	// Запускаем воркеры
 	for range numWorkers {
-		go d.worker(jobsCh, resultsCh, &wg)
+		go d.worker(jobsCh, resultsCh, &wg, tracker)
 	}
 
 	go func() {
@@ -69,7 +69,7 @@ func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, sf
 			if result.err == nil {
 				state.DownloadedChunks[result.chunkNum] = true
 			} else {
-				fmt.Printf("Error downloading chunk %d: %s\n", result.chunkNum, result.err.Error())
+				tracker.Logf("Error downloading chunk %d: %s\n", result.chunkNum, result.err.Error())
 			}
 		}
 	}()
@@ -101,7 +101,7 @@ func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, sf
 }
 
 // Скачивание одного чанка
-func (d *Downloader) downloadChunk(url string, chunkNum int, sf *storage.SafeFile) error {
+func (d *Downloader) downloadChunk(url string, chunkNum int, sf *storage.SafeFile, tracker ui.Tracker) error {
 	start := int64(d.chunkSize * chunkNum)
 	end := start + int64(d.chunkSize) - 1
 
@@ -123,16 +123,20 @@ func (d *Downloader) downloadChunk(url string, chunkNum int, sf *storage.SafeFil
 	}
 
 	// Позиционируемся в файле
-	sf.Mu.Lock()
+	sf.Lock()
 	if _, err := sf.File.Seek(start, io.SeekStart); err != nil {
 		return err
 	}
 
+	// Оборачиваем источник в reader для прогресс бара
+	reader := tracker.ProxyReader(resp.Body)
+	defer reader.Close()
+
 	// Копируем данные
-	if _, err := io.Copy(sf.File, resp.Body); err != nil {
+	if _, err := io.Copy(sf.File, reader); err != nil {
 		return err
 	}
-	sf.Mu.Unlock()
 
+	sf.Unlock()
 	return nil
 }

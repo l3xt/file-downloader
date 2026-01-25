@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"file-downloader/internal/storage"
+	"file-downloader/internal/ui"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,20 +29,19 @@ func NewDownloader(timeout time.Duration, chunkSize int) *Downloader {
 }
 
 // Загрузка одного url
-func (d *Downloader) Download(url, dirPath string) error {
-	fmt.Println("Start download file...")
-
+func (d *Downloader) Download(url, dirPath string, c *ui.Container) error {
 	// Получение метаданных
 	meta, err := FetchMetadata(d.client, url, d.chunkSize)
 	if err != nil {
 		return fmt.Errorf("metadata fetch: %w", err)
 	}
 
-	fmt.Printf("size: %d, support chunks: %v, chunks count: %d\n",
-		meta.Size, meta.Resumable, meta.ChunksCount)
+	fileName := path.Base(url)
+
+	// Создание трекера для отслеживания прогресса загрузки
+	tracker := c.AddBar(meta.Size, fileName)
 
 	// Создание файла
-	fileName := path.Base(url)
 	sf, err := storage.NewSafeFile(dirPath, fileName, meta.Size)
 	if err != nil {
 		return fmt.Errorf("creating file: %w", err)
@@ -55,10 +55,11 @@ func (d *Downloader) Download(url, dirPath string) error {
 			return loadErr
 		}
 
-		err = d.downloadChunks(url, state, sf)
+		tracker.SetCurrent(int64(state.DownloadedCount * state.ChunkSize))
+		err = d.downloadChunks(url, state, sf, tracker)
 	} else {
 		// Загрузка обычная
-		err = d.downloadSimple(url, sf.File)
+		err = d.downloadSimple(url, sf.File, tracker)
 	}
 	if err != nil {
 		return err
@@ -68,7 +69,7 @@ func (d *Downloader) Download(url, dirPath string) error {
 }
 
 // Загрузка напрямую без чанков
-func (d *Downloader) downloadSimple(url string, dest io.Writer) error {
+func (d *Downloader) downloadSimple(url string, dest io.Writer, tracker ui.Tracker) error {
 	resp, err := d.client.Get(url)
 	if err != nil {
 		return fmt.Errorf("GET request: %w", err)
@@ -79,7 +80,11 @@ func (d *Downloader) downloadSimple(url string, dest io.Writer) error {
 		return fmt.Errorf("server returned status %d", resp.StatusCode)
 	}
 
-	if _, err = io.Copy(dest, resp.Body); err != nil {
+	// Оборачиваем источник в reader для прогресс бара
+	reader := tracker.ProxyReader(resp.Body)
+	defer reader.Close()
+
+	if _, err = io.Copy(dest, reader); err != nil {
 		return fmt.Errorf("copying data: %w", err)
 	}
 

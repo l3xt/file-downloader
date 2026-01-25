@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"os"
+
 	"sync"
 	"time"
 
 	"file-downloader/internal/downloader"
 	"file-downloader/internal/sli"
+	"file-downloader/internal/ui"
 )
 
 func main() {
@@ -23,13 +25,17 @@ func main() {
 
 	// Запускаем загрузки параллельно
 	var wg sync.WaitGroup
-	errorsCh := make(chan error, len(config.URLs))
 
+	// Создаем UI контейнер
+	c := ui.New(&wg)
+
+	errorsCh := make(chan error, len(config.URLs))
 	for _, url := range config.URLs {
 		wg.Add(1)
+
 		go func(u string) {
 			defer wg.Done()
-			if err := dl.Download(u, config.SavePath); err != nil {
+			if err := dl.Download(u, config.SavePath, c); err != nil {
 				errorsCh <- fmt.Errorf("processing url %s: %w", u, err)
 			}
 		}(url)
@@ -37,7 +43,8 @@ func main() {
 
 	// Ожидаем завершения
 	go func() {
-		wg.Wait()
+		// wg.Wait()
+		c.Wait()
 		close(errorsCh)
 	}()
 

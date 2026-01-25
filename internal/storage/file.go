@@ -9,7 +9,7 @@ import (
 
 type SafeFile struct {
 	File *os.File
-	Mu   sync.Mutex
+	mu   sync.Mutex
 }
 
 func NewSafeFile(dirPath, fileName string, size int64) (*SafeFile, error) {
@@ -33,4 +33,12 @@ func NewSafeFile(dirPath, fileName string, size int64) (*SafeFile, error) {
 	return &SafeFile{
 		File: f,
 	}, nil
+}
+
+func (sf *SafeFile) Lock() {
+	sf.mu.Lock()
+}
+
+func (sf *SafeFile) Unlock() {
+	sf.mu.Unlock()
 }

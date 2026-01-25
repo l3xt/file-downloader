@@ -7,7 +7,7 @@ import (
 // Содержит информацию о конфигурации, которая была передана в аргументах CLI
 type Config struct {
 	SavePath string
-	URLs []string
+	URLs     []string
 }
 
 func ParseArgs(args []string) (*Config, error) {
@@ -20,7 +20,6 @@ func ParseArgs(args []string) (*Config, error) {
 
 	return &Config{
 		SavePath: args[1],
-		URLs: args[2:],
+		URLs:     args[2:],
 	}, nil
 }
-
