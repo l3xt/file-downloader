@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"context"
 	"file-downloader/internal/storage"
 	"file-downloader/internal/ui"
 	"fmt"
@@ -29,7 +30,7 @@ func NewDownloader(timeout time.Duration, chunkSize int) *Downloader {
 }
 
 // Загрузка одного url
-func (d *Downloader) Download(url, dirPath string, c *ui.Container) error {
+func (d *Downloader) Download(ctx context.Context, url, dirPath string, c *ui.Container) error {
 	// Получение метаданных
 	meta, err := FetchMetadata(d.client, url, d.chunkSize)
 	if err != nil {
@@ -56,7 +57,7 @@ func (d *Downloader) Download(url, dirPath string, c *ui.Container) error {
 		}
 
 		tracker.SetCurrent(int64(state.DownloadedCount * state.ChunkSize))
-		err = d.downloadChunks(url, state, sf, tracker)
+		err = d.downloadChunks(ctx, url, state, sf, tracker)
 	} else {
 		// Загрузка обычная
 		err = d.downloadSimple(url, sf.File, tracker)

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 
 	"sync"
 	"time"
@@ -20,22 +22,33 @@ func main() {
 		return
 	}
 
+	// Создаем UI контейнер
+	var wg sync.WaitGroup
+	c := ui.New(&wg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	signalsCh := make(chan os.Signal, 1)
+	signal.Notify(signalsCh, os.Interrupt)
+
+	go func() {
+		<- signalsCh
+		c.Logf("Программа завершает свою работу...")
+		cancel()
+	}()
+
 	// Создаём загрузчик
 	dl := downloader.NewDownloader(30*time.Second, downloader.DefaultChunkSize)
 
 	// Запускаем загрузки параллельно
-	var wg sync.WaitGroup
-
-	// Создаем UI контейнер
-	c := ui.New(&wg)
-
 	errorsCh := make(chan error, len(config.URLs))
 	for _, url := range config.URLs {
 		wg.Add(1)
 
 		go func(u string) {
 			defer wg.Done()
-			if err := dl.Download(u, config.SavePath, c); err != nil {
+			if err := dl.Download(ctx, u, config.SavePath, c); err != nil {
 				errorsCh <- fmt.Errorf("processing url %s: %w", u, err)
 			}
 		}(url)
@@ -43,8 +56,8 @@ func main() {
 
 	// Ожидаем завершения
 	go func() {
-		// wg.Wait()
-		c.Wait()
+		wg.Wait()
+		// c.Wait()
 		close(errorsCh)
 	}()
 

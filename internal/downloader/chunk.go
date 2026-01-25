@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"context"
 	"file-downloader/internal/storage"
 	"file-downloader/internal/ui"
 	"fmt"
@@ -25,34 +26,52 @@ type ChunkResult struct {
 	err      error
 }
 
-func (d *Downloader) worker(jobs <-chan ChunkJob, results chan<- ChunkResult, wg *sync.WaitGroup, tracker ui.Tracker) {
-	for j := range jobs {
-		result := ChunkResult{
-			chunkNum: j.chunkNum,
-			err:      nil,
-		}
-
-		var err error
-		for range maxRetries {
-			err = d.downloadChunk(j.url, j.chunkNum, j.sf, tracker)
-			if err == nil {
-				break // Останавливаем цикл  если чанк скачен
+func (d *Downloader) worker(ctx context.Context, jobs <-chan ChunkJob, results chan<- ChunkResult, wg *sync.WaitGroup, tracker ui.Tracker) {
+	defer wg.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			tracker.Logf("Worker: context closed")
+			return
+		case job, ok := <- jobs:
+			if !ok {
+				// Канал закрыт продюсером, работы больше нет
+				tracker.Logf("Worker: channel closed")
+				return
+			}
+			
+			if ctx.Err() != nil {
+				tracker.Logf("Worker: chunk %d claimed, but context done", job.chunkNum)
+				return
 			}
 
-			// Если произошла ошибка
-			tracker.Logf("Error downloading chunk %d, try again after %v seconds...\n", j.chunkNum, retryDelay.Seconds())
-			time.Sleep(retryDelay)
-		}
+			result := ChunkResult{
+				chunkNum: job.chunkNum,
+				err:      nil,
+			}
 
-		// Устанавливаем ошибку если она есть
-		result.err = err
-		results <- result
-		wg.Done()
+			var err error
+			for range maxRetries {
+				err = d.downloadChunk(job.url, job.chunkNum, job.sf, tracker)
+				if err == nil {
+					break // Останавливаем цикл  если чанк скачен
+				}
+
+				// Если произошла ошибка
+				tracker.Logf("Error downloading chunk %d, try again after %v seconds...", job.chunkNum, retryDelay.Seconds())
+				time.Sleep(retryDelay)
+			}
+
+			// Устанавливаем ошибку если она есть
+			result.err = err
+			results <- result
+		}
 	}
+
 }
 
 // Скачивание файла с помощью чанков
-func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, sf *storage.SafeFile, tracker ui.Tracker) error {
+func (d *Downloader) downloadChunks(ctx context.Context, url string, state *storage.DownloadState, sf *storage.SafeFile, tracker ui.Tracker) error {
 	chunksCount := len(state.DownloadedChunks)
 	jobsCh := make(chan ChunkJob, chunksCount)
 	resultsCh := make(chan ChunkResult, chunksCount)
@@ -61,7 +80,8 @@ func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, sf
 
 	// Запускаем воркеры
 	for range numWorkers {
-		go d.worker(jobsCh, resultsCh, &wg, tracker)
+		wg.Add(1)
+		go d.worker(ctx, jobsCh, resultsCh, &wg, tracker)
 	}
 
 	go func() {
@@ -69,7 +89,7 @@ func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, sf
 			if result.err == nil {
 				state.DownloadedChunks[result.chunkNum] = true
 			} else {
-				tracker.Logf("Error downloading chunk %d: %s\n", result.chunkNum, result.err.Error())
+				tracker.Logf("Error downloading chunk %d: %s", result.chunkNum, result.err.Error())
 			}
 		}
 	}()
@@ -81,7 +101,6 @@ func (d *Downloader) downloadChunks(url string, state *storage.DownloadState, sf
 		}
 
 		// Загружаем один чанк
-		wg.Add(1)
 		jobsCh <- ChunkJob{
 			url:      url,
 			chunkNum: chunk,
