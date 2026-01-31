@@ -42,3 +42,9 @@ func (sf *SafeFile) Lock() {
 func (sf *SafeFile) Unlock() {
 	sf.mu.Unlock()
 }
+
+func (sf *SafeFile) Close() error {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
+	return sf.File.Close()
+}

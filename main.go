@@ -57,7 +57,6 @@ func main() {
 	// Ожидаем завершения
 	go func() {
 		wg.Wait()
-		// c.Wait()
 		close(errorsCh)
 	}()
 

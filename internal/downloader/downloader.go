@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const DefaultChunkSize = 10 * 1024 * 1024 // 10 МБ
+const DefaultChunkSize = 5 * 1024 * 1024 // 5 МБ
 
 // Структура загручика
 type Downloader struct {
@@ -47,6 +47,7 @@ func (d *Downloader) Download(ctx context.Context, url, dirPath string, c *ui.Co
 	if err != nil {
 		return fmt.Errorf("creating file: %w", err)
 	}
+	defer sf.Close()
 
 	// Загрузка данных
 	if meta.Resumable && meta.ChunksCount > 1 {

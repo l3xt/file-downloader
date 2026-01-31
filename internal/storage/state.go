@@ -6,17 +6,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 const fileExtension string = ".progress"
 
 // Структура с информацией о прогрессе загружаемого файла
 type DownloadState struct {
+	mu sync.RWMutex
+
 	Dir              string `json:"dir"`
 	Name             string `json:"name"`
 	ChunkSize        int    `json:"chunkSize"`
 	DownloadedChunks []bool `json:"downloadedChunks"`
-	DownloadedCount  int 	`json:"downloadedCount"`
+	DownloadedCount  int    `json:"downloadedCount"`
 }
 
 // Создание экземпляра DownloadState с валидацией
@@ -36,10 +39,14 @@ func NewDownloadState(dir, name string, chunkSize, totalChunks int) (*DownloadSt
 		Name:             name + fileExtension,
 		ChunkSize:        chunkSize,
 		DownloadedChunks: make([]bool, totalChunks),
+		DownloadedCount:  0,
 	}, nil
 }
 
 func (s *DownloadState) SaveJSON() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := os.MkdirAll(s.Dir, 0755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
@@ -95,4 +102,24 @@ func LoadDownloadState(dir, name string, chunkSize, totalChunks int) (*DownloadS
 	}
 
 	return NewDownloadState(dir, name, chunkSize, totalChunks)
+}
+
+func (s *DownloadState) SetChunkUploaded(chunkIdx int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Если уже есть запись о загруженном чанке, то выходим
+	if s.DownloadedChunks[chunkIdx] {
+		return
+	}
+
+	s.DownloadedChunks[chunkIdx] = true
+	s.DownloadedCount++
+}
+
+func (s *DownloadState) IsChunkDownloaded(chunkIdx int) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.DownloadedChunks[chunkIdx]
 }
