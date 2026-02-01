@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 )
@@ -18,7 +19,7 @@ const numWorkers = 8
 type ChunkJob struct {
 	url      string
 	chunkNum int
-	sf       *storage.SafeFile
+	file	 *os.File
 }
 
 type ChunkResult struct {
@@ -52,7 +53,7 @@ func (d *Downloader) worker(ctx context.Context, jobs <-chan ChunkJob, results c
 
 			var err error
 			for range maxRetries {
-				err = d.downloadChunk(job.url, job.chunkNum, job.sf, tracker)
+				err = d.downloadChunk(ctx, job.url, job.chunkNum, job.file, tracker)
 				if err == nil {
 					tracker.Logf("Чанк %d загружен.", job.chunkNum)
 					break // Останавливаем цикл  если чанк скачен
@@ -82,7 +83,7 @@ func (d *Downloader) worker(ctx context.Context, jobs <-chan ChunkJob, results c
 }
 
 // Скачивание файла с помощью чанков
-func (d *Downloader) downloadChunks(ctx context.Context, url string, state *storage.DownloadState, sf *storage.SafeFile, tracker ui.Tracker) error {
+func (d *Downloader) downloadChunks(ctx context.Context, url string, state *storage.DownloadState, file *os.File, tracker ui.Tracker) error {
 	jobsCh := make(chan ChunkJob, numWorkers)
 	resultsCh := make(chan ChunkResult, numWorkers)
 
@@ -118,7 +119,7 @@ func (d *Downloader) downloadChunks(ctx context.Context, url string, state *stor
 		jobsCh <- ChunkJob{
 			url:      url,
 			chunkNum: chunk,
-			sf:       sf,
+			file:     file,
 		}
 	}
 
@@ -135,11 +136,11 @@ func (d *Downloader) downloadChunks(ctx context.Context, url string, state *stor
 }
 
 // Скачивание одного чанка
-func (d *Downloader) downloadChunk(url string, chunkNum int, sf *storage.SafeFile, tracker ui.Tracker) error {
+func (d *Downloader) downloadChunk(ctx context.Context, url string, chunkNum int, file *os.File, tracker ui.Tracker) error {
 	start := int64(d.chunkSize * chunkNum)
 	end := start + int64(d.chunkSize) - 1
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return err
 	}
@@ -152,26 +153,24 @@ func (d *Downloader) downloadChunk(url string, chunkNum int, sf *storage.SafeFil
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusPartialContent {
-		return fmt.Errorf("server does not support Range (status %d)", resp.StatusCode)
+	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 
-	// Блокируем мьютекс
-	sf.Lock()
-	defer sf.Unlock()
-	
-	// Позиционируемся в файле
-	if _, err := sf.File.Seek(start, io.SeekStart); err != nil {
-		return err
-	}
-
-	// Оборачиваем источник в reader для прогресс бара
+	// Оборачиваем в ProxyReader чтобы видеть прогресс загрузки
 	reader := tracker.ProxyReader(resp.Body)
 	defer reader.Close()
+	
+	// Читаем кусок файла в память
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return fmt.Errorf("reading body: %w", err)
+	}
 
-	// Копируем данные
-	if _, err := io.Copy(sf.File, reader); err != nil {
-		return err
+	// Записываем кусок в файл на нужное место
+	_, err = file.WriteAt(data, start)
+	if err != nil {
+		return fmt.Errorf("writing to file: %w", err)
 	}
 
 	return nil

@@ -33,8 +33,8 @@ func main() {
 	signal.Notify(signalsCh, os.Interrupt)
 
 	go func() {
+		// Горутина блокируется ожидая сигнал завершения
 		<- signalsCh
-		c.Logf("Программа завершает свою работу...")
 		cancel()
 	}()
 

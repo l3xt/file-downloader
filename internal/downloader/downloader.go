@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path"
+	"path/filepath"
 	"time"
 )
 
@@ -43,11 +45,17 @@ func (d *Downloader) Download(ctx context.Context, url, dirPath string, c *ui.Co
 	tracker := c.AddBar(meta.Size, fileName)
 
 	// Создание файла
-	sf, err := storage.NewSafeFile(dirPath, fileName, meta.Size)
+	fullPath := filepath.Join(dirPath, fileName)
+	f, err := os.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("creating file: %w", err)
 	}
-	defer sf.Close()
+	defer f.Close()
+
+	// Выделяем память
+	if err := os.Truncate(fullPath, meta.Size); err != nil {
+		return err
+	}
 
 	// Загрузка данных
 	if meta.Resumable && meta.ChunksCount > 1 {
@@ -57,11 +65,11 @@ func (d *Downloader) Download(ctx context.Context, url, dirPath string, c *ui.Co
 			return loadErr
 		}
 
-		tracker.SetCurrent(int64(state.DownloadedCount * state.ChunkSize))
-		err = d.downloadChunks(ctx, url, state, sf, tracker)
+		tracker.SetCurrent(state.DownloadedCount * int64(state.ChunkSize))
+		err = d.downloadChunks(ctx, url, state, f, tracker)
 	} else {
 		// Загрузка обычная
-		err = d.downloadSimple(url, sf.File, tracker)
+		err = d.downloadSimple(url, f, tracker)
 	}
 	if err != nil {
 		return err
