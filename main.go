@@ -35,6 +35,7 @@ func main() {
 	go func() {
 		// Горутина блокируется ожидая сигнал завершения
 		<- signalsCh
+		c.Logf("Received interrupt signal, shutting down...")
 		cancel()
 	}()
 

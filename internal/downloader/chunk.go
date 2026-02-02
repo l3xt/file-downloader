@@ -2,7 +2,6 @@ package downloader
 
 import (
 	"context"
-	"errors"
 	"file-downloader/internal/storage"
 	"file-downloader/internal/ui"
 	"fmt"
@@ -38,7 +37,7 @@ func (d *Downloader) worker(ctx context.Context, jobs <-chan ChunkJob, results c
 			if !ok || ctx.Err() != nil {
 				return
 			}
-			
+
 			result := ChunkResult{
 				chunkNum: job.chunkNum,
 				err:      nil,
@@ -58,11 +57,7 @@ func (d *Downloader) worker(ctx context.Context, jobs <-chan ChunkJob, results c
 				}
 			}
 
-			select {
-			case <-ctx.Done():
-				return
-			case results <- result:
-			}
+			results <- result
 		}
 	}
 }
@@ -87,26 +82,18 @@ func (d *Downloader) downloadChunks(ctx context.Context, url string, state *stor
 	// Горутина для обработки результатов
 	go func(state *storage.DownloadState) {
 		defer consumerWG.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case result, ok := <-resultsCh:
-				if !ok {
-					return	// Канал закрыт, завершаем обработку
-				}
-				if result.err == nil {
-					state.SetChunkUploaded(result.chunkNum)
-				} else {
-					tracker.Logf("Error downloading chunk %d: %s", result.chunkNum, result.err.Error())
-				}
+		for result := range resultsCh {
+			if result.err == nil {
+				state.SetChunkUploaded(result.chunkNum)
+			} else {
+				tracker.Logf("downloading chunk %d: %s", result.chunkNum, result.err.Error())
 			}
 		}
 	}(state)
 
 	chunksCount := len(state.DownloadedChunks)
 
-	Loop:
+Loop:
 	for chunk := range chunksCount {
 		// Если чанк уже был загружен, то пропускаем
 		if state.IsChunkDownloaded(chunk) {
@@ -121,7 +108,7 @@ func (d *Downloader) downloadChunks(ctx context.Context, url string, state *stor
 		}
 		select {
 		case <-ctx.Done():
-			break Loop	// Выходим из цикла если контекст закрыт
+			break Loop // Выходим из цикла если контекст закрыт
 		case jobsCh <- job:
 			// Ничего не делаем, работа отправлена
 		}
@@ -144,7 +131,7 @@ func (d *Downloader) downloadChunk(ctx context.Context, url string, chunkNum int
 	start := int64(d.chunkSize * chunkNum)
 	end := start + int64(d.chunkSize) - 1
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
 	}
@@ -153,13 +140,6 @@ func (d *Downloader) downloadChunk(ctx context.Context, url string, chunkNum int
 
 	resp, err := d.client.Do(req)
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			tracker.Logf("Chunk %d download canceled", chunkNum)
-			return nil
-		} else if errors.Is(err, context.DeadlineExceeded) {
-			tracker.Logf("Chunk %d download timeout", chunkNum)
-			return fmt.Errorf("timeout: %w", err)
-		}
 		return fmt.Errorf("making request: %w", err)
 	}
 	defer resp.Body.Close()
