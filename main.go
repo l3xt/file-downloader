@@ -9,14 +9,14 @@ import (
 	"sync"
 	"time"
 
+	"file-downloader/internal/cli"
 	"file-downloader/internal/downloader"
-	"file-downloader/internal/sli"
 	"file-downloader/internal/ui"
 )
 
 func main() {
 	// Парсим аргументы
-	config, err := sli.ParseArgs(os.Args)
+	config, err := cli.ParseArgs(os.Args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "parsing args: %v\n", err)
 		return
@@ -34,7 +34,7 @@ func main() {
 
 	go func() {
 		// Горутина блокируется ожидая сигнал завершения
-		<- signalsCh
+		<-signalsCh
 		c.Logf("Received interrupt signal, shutting down...")
 		cancel()
 	}()

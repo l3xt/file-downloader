@@ -34,3 +34,5 @@ go.work.sum
 # Download dirs
 download_files/
 files/
+file-downloader
+*.progress

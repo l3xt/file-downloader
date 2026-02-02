@@ -1,4 +1,4 @@
-package sli
+package cli
 
 import (
 	"fmt"
