@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"file-downloader/internal/storage"
 	"file-downloader/internal/ui"
 	"fmt"
@@ -19,7 +20,7 @@ const numWorkers = 8
 type ChunkJob struct {
 	url      string
 	chunkNum int
-	file	 *os.File
+	file     *os.File
 }
 
 type ChunkResult struct {
@@ -32,49 +33,33 @@ func (d *Downloader) worker(ctx context.Context, jobs <-chan ChunkJob, results c
 	for {
 		select {
 		case <-ctx.Done():
-			tracker.Logf("Worker: context closed")
 			return
-		case job, opened := <- jobs:
-			if !opened {
-				// Канал закрыт, работы больше нет
-				tracker.Logf("Worker: channel closed")
+		case job, ok := <-jobs:
+			if !ok || ctx.Err() != nil {
 				return
 			}
 			
-			if ctx.Err() != nil {
-				tracker.Logf("Worker: chunk %d claimed, but context done", job.chunkNum)
-				return
-			}
-
 			result := ChunkResult{
 				chunkNum: job.chunkNum,
 				err:      nil,
 			}
 
-			var err error
 			for range maxRetries {
-				err = d.downloadChunk(ctx, job.url, job.chunkNum, job.file, tracker)
-				if err == nil {
-					tracker.Logf("Чанк %d загружен.", job.chunkNum)
+				result.err = d.downloadChunk(ctx, job.url, job.chunkNum, job.file, tracker)
+				if result.err == nil {
 					break // Останавливаем цикл  если чанк скачен
 				}
 
-				// Если произошла ошибка
-				tracker.Logf("Error downloading chunk %d, try again after %v seconds...", job.chunkNum, retryDelay.Seconds())
-				
 				select {
 				case <-ctx.Done():
 					return
 				case <-time.After(retryDelay):
-					// Ничего не делаем, чтобы код продолжился и цикл пошел в ретрай
+					tracker.Logf("Error downloading chunk %d, try again after %v seconds...", job.chunkNum, retryDelay.Seconds())
 				}
 			}
 
-			// Устанавливаем ошибку если она есть
-			result.err = err
-			
 			select {
-			case <- ctx.Done():
+			case <-ctx.Done():
 				return
 			case results <- result:
 			}
@@ -98,17 +83,30 @@ func (d *Downloader) downloadChunks(ctx context.Context, url string, state *stor
 		go d.worker(ctx, jobsCh, resultsCh, &workerWG, tracker)
 	}
 
-	consumerWG.Go(func() {
-		for result := range resultsCh {
-			if result.err == nil {
-				state.SetChunkUploaded(result.chunkNum)
-			} else {
-				tracker.Logf("Error downloading chunk %d: %s", result.chunkNum, result.err.Error())
+	consumerWG.Add(1)
+	// Горутина для обработки результатов
+	go func(state *storage.DownloadState) {
+		defer consumerWG.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case result, ok := <-resultsCh:
+				if !ok {
+					return	// Канал закрыт, завершаем обработку
+				}
+				if result.err == nil {
+					state.SetChunkUploaded(result.chunkNum)
+				} else {
+					tracker.Logf("Error downloading chunk %d: %s", result.chunkNum, result.err.Error())
+				}
 			}
 		}
-	})
+	}(state)
 
 	chunksCount := len(state.DownloadedChunks)
+
+	Loop:
 	for chunk := range chunksCount {
 		// Если чанк уже был загружен, то пропускаем
 		if state.IsChunkDownloaded(chunk) {
@@ -116,10 +114,16 @@ func (d *Downloader) downloadChunks(ctx context.Context, url string, state *stor
 		}
 
 		// Загружаем один чанк
-		jobsCh <- ChunkJob{
+		job := ChunkJob{
 			url:      url,
 			chunkNum: chunk,
 			file:     file,
+		}
+		select {
+		case <-ctx.Done():
+			break Loop	// Выходим из цикла если контекст закрыт
+		case jobsCh <- job:
+			// Ничего не делаем, работа отправлена
 		}
 	}
 
@@ -149,7 +153,14 @@ func (d *Downloader) downloadChunk(ctx context.Context, url string, chunkNum int
 
 	resp, err := d.client.Do(req)
 	if err != nil {
-		return err
+		if errors.Is(err, context.Canceled) {
+			tracker.Logf("Chunk %d download canceled", chunkNum)
+			return nil
+		} else if errors.Is(err, context.DeadlineExceeded) {
+			tracker.Logf("Chunk %d download timeout", chunkNum)
+			return fmt.Errorf("timeout: %w", err)
+		}
+		return fmt.Errorf("making request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -160,7 +171,7 @@ func (d *Downloader) downloadChunk(ctx context.Context, url string, chunkNum int
 	// Оборачиваем в ProxyReader чтобы видеть прогресс загрузки
 	reader := tracker.ProxyReader(resp.Body)
 	defer reader.Close()
-	
+
 	// Читаем кусок файла в память
 	data, err := io.ReadAll(reader)
 	if err != nil {
